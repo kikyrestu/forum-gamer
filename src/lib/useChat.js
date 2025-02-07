@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
+import { useAuth } from '@/lib/AuthContext';
 import { 
   collection, 
   addDoc, 
@@ -15,10 +16,13 @@ import {
 } from 'firebase/firestore';
 
 export function useChat() {
+  const { user } = useAuth();
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!user) return;
+
     // Subscribe to last 50 messages
     const q = query(
       collection(db, 'messages'),
@@ -33,13 +37,16 @@ export function useChat() {
       });
       setMessages(newMessages.reverse());
       setLoading(false);
+    }, (error) => {
+      console.error('Chat subscription error:', error);
+      setLoading(false);
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [user]);
 
   const sendMessage = async (user, text) => {
-    if (!text.trim()) return;
+    if (!text.trim() || !user) return;
 
     try {
       // Get user preferences for roles

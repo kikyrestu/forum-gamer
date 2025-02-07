@@ -9,6 +9,8 @@ import { ProfileModal } from '@/components/ProfileModal';
 import { SignInModal } from '@/components/SignInModal';
 import { useChat } from '@/lib/useChat';
 import { formatDistanceToNow } from 'date-fns';
+import { Toast } from '@/components/Toast';
+import { LoadingSpinner } from '@/components/LoadingSpinner';
 
 export default function Home() {
   const { user, signInAsGuest } = useAuth();
@@ -20,6 +22,8 @@ export default function Home() {
   const [userPreferences, setUserPreferences] = useState(null);
   const { messages, loading: chatLoading, sendMessage } = useChat();
   const [newMessage, setNewMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   // Check if user already has preferences
   useEffect(() => {
@@ -45,33 +49,59 @@ export default function Home() {
   }, [user]);
 
   const saveUserPreferences = async () => {
+    setLoading(true);
+    setError(null);
+    
     try {
-      const currentUser = user || await signInAsGuest();
-      
+      // 1. Authenticate user
+      let currentUser = user;
+      if (!currentUser) {
+        const result = await signInAsGuest();
+        if (!result) throw new Error('Failed to authenticate');
+        currentUser = result;
+      }
+
+      // 2. Validate form data
       const gamePreferences = selectedGames.map(gameId => {
         const game = gameOptions.find(g => g.id === gameId);
+        const mainRole = document.querySelector(`select[name="${gameId}-role"]`)?.value;
+        const rank = document.querySelector(`select[name="${gameId}-rank"]`)?.value;
+
+        if (!mainRole || !rank) {
+          throw new Error(`Please select role and rank for ${game.name}`);
+        }
+
         return {
           gameId,
           name: game.name,
-          mainRole: document.querySelector(`select[name="${gameId}-role"]`).value,
-          rank: document.querySelector(`select[name="${gameId}-rank"]`).value
+          mainRole,
+          rank
         };
       });
 
+      // 3. Prepare user data
       const userData = {
         uid: currentUser.uid,
+        username: currentUser.displayName || 'Guest User',
         type: 'guest',
         games: gamePreferences,
         createdAt: new Date().toISOString(),
         lastActive: new Date().toISOString()
       };
 
+      // 4. Save to Firestore
       await setDoc(doc(db, 'users', currentUser.uid), userData);
+      
+      // 5. Update local state
       setUserPreferences(userData);
       setShowWelcomeModal(false);
       setShowProfileModal(true);
+
     } catch (error) {
       console.error('Error saving preferences:', error);
+      setError(error.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -397,6 +427,11 @@ export default function Home() {
             {step === 3 && (
               <div>
                 <h3 className="text-2xl font-bold text-slate-100 mb-6">Customize Your Roles</h3>
+                {error && (
+                  <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+                    <p className="text-red-400 text-sm">{error}</p>
+                  </div>
+                )}
                 {selectedGames.map(gameId => {
                   const game = gameOptions.find(g => g.id === gameId);
                   return (
@@ -405,8 +440,11 @@ export default function Home() {
                       <div className="space-y-4">
                         <div>
                           <label className="text-sm text-slate-400 mb-2 block">Main Role</label>
-                          <select className="w-full bg-[#112240] text-slate-300 rounded-xl px-4 py-3
-                            border border-emerald-500/20 focus:border-emerald-500/50 focus:outline-none">
+                          <select 
+                            name={`${gameId}-role`}
+                            className="w-full bg-[#112240] text-slate-300 rounded-xl px-4 py-3
+                              border border-emerald-500/20 focus:border-emerald-500/50 focus:outline-none"
+                          >
                             {game.roles.map(role => (
                               <option key={role} value={role}>{role}</option>
                             ))}
@@ -414,8 +452,11 @@ export default function Home() {
                         </div>
                         <div>
                           <label className="text-sm text-slate-400 mb-2 block">Rank</label>
-                          <select className="w-full bg-[#112240] text-slate-300 rounded-xl px-4 py-3
-                            border border-emerald-500/20 focus:border-emerald-500/50 focus:outline-none">
+                          <select
+                            name={`${gameId}-rank`}
+                            className="w-full bg-[#112240] text-slate-300 rounded-xl px-4 py-3
+                              border border-emerald-500/20 focus:border-emerald-500/50 focus:outline-none"
+                          >
                             {game.rank.map(rank => (
                               <option key={rank} value={rank}>{rank}</option>
                             ))}
@@ -429,16 +470,27 @@ export default function Home() {
                   <button
                     onClick={() => setStep(2)}
                     className="px-4 py-2 text-slate-400 hover:text-slate-300"
+                    disabled={loading}
                   >
                     Back
                   </button>
                   <button
                     onClick={saveUserPreferences}
+                    disabled={loading || selectedGames.length === 0}
                     className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-xl
-                      font-semibold text-white hover:from-emerald-500 hover:to-teal-500 transition-all
-                      duration-300 transform hover:scale-105"
+                      font-semibold text-white hover:from-emerald-500 hover:to-teal-500 
+                      transition-all duration-300 transform hover:scale-105
+                      disabled:opacity-50 disabled:cursor-not-allowed
+                      flex items-center space-x-2"
                   >
-                    Let's Go!
+                    {loading ? (
+                      <>
+                        <LoadingSpinner />
+                        <span>Saving...</span>
+                      </>
+                    ) : (
+                      <span>Let's Go!</span>
+                    )}
                   </button>
                 </div>
               </div>
@@ -452,6 +504,15 @@ export default function Home() {
           user={user}
           userPreferences={userPreferences}
           onClose={() => setShowProfileModal(false)}
+        />
+      )}
+
+      {/* Show error toast */}
+      {error && (
+        <Toast 
+          message={error} 
+          type="error" 
+          onClose={() => setError(null)}
         />
       )}
     </div>
